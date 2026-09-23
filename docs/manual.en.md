@@ -1515,6 +1515,10 @@ Currently, two such payloads are supported: `tls_client_hello` and `quic_initial
 
 For `tls_client_hello`, standard payload assembly of sequential TCP segments is performed, merging them into a single `reasm_data` block.
 
+On some routers with hardware fastpath (a known case is the Mediatek MT7621 in the Keenetic KN-1011), a DROP verdict for an incomplete TLS reassembly may switch the flow to the hardware path. Subsequent segments then bypass NFQUEUE, so reassembly never completes. `--fastpath-workaround=1` replaces every held segment of an incomplete TLS reassembly with a payload-less TCP ACK. This packet occupies no TCP sequence space and exposes no ClientHello data, while the original segment remains queued for replay after reassembly completes.
+
+The `auto` mode starts with the normal DROP behavior and enables the workaround globally after two retransmissions during incomplete reassembly with no successful reassembly between them. A successful reassembly resets the counter until the threshold is reached; after that, the workaround remains enabled until the process restarts. The default mode is `0`. The workaround is unnecessary on platforms without this problem.
+
 For `quic_initial`, individual packets are accumulated in an internal buffer, after which they are decrypted, merged, and defragmented. This handles payload parts scattered across packets and different offsets (a technique used by Chrome to prevent others from oversimplifying their algorithms, ensuring they follow standards and can correctly reassemble payloads from parts).
 
 Until assembly is finalized, packets are accumulated in the internal buffer without calling Lua. Once finalized, the individual parts are replayed ([replay](#handling-multi-packet-payloads)). The Lua instances receive a dissection of each delayed packet, but with the fields `desync.replay=true`, `desync.replay_piece`, `desync.replay_count`, and `desync.replay_piece_last` set.

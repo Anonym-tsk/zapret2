@@ -644,7 +644,6 @@ static void reasm_client_cancel_discard(t_ctrack *ctrack)
 		ReasmClear(&ctrack->reasm_client);
 		ctrack->reasm_client_payload = L7P_UNKNOWN;
 		rawpacket_queue_destroy(&ctrack->delayed);
-		rawpacket_queue_init(&ctrack->delayed, RAW_PACKET_QUEUE_DELAYED_MAX);
 		DLOG("reassemble session cancelled, delayed packets discarded\n");
 	}
 }
@@ -1722,6 +1721,8 @@ static uint8_t dpi_desync_tcp_packet_play(
 						// likely exceeded packet limit or unlikely out of memory
 						DLOG_ERR("rawpacket_queue failed !\n");
 						reasm_client_cancel(ps.ctrack);
+						rdata_payload = dis->data_payload;
+						rlen_payload = dis->len_payload;
 						ps.l7payload = L7P_UNKNOWN; // middle packet may be not L7P_TLS_CLIENT_HELLO
 						goto rediscover;
 					}
