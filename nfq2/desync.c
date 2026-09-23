@@ -649,6 +649,7 @@ static void reasm_client_fin(t_ctrack *ctrack)
 }
 
 
+// A payload-less ACK occupies no sequence space and reveals no payload.
 static bool make_tcp_ack_only(const struct dissect *dis, uint8_t *mod_pkt, size_t *len_mod_pkt)
 {
 	if (!dis || !dis->tcp || (!dis->ip && !dis->ip6)) return false;
