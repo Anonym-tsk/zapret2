@@ -1745,12 +1745,9 @@ static uint8_t dpi_desync_tcp_packet_play(
 					// with a payload-less TCP ACK (VERDICT_MODIFY keeps NF_ACCEPT semantics
 					// so the flow stays on the slow path). No ClientHello bytes leak to the
 					// server or DPI and no TCP sequence space is occupied. The full desynced
-					// payload is delivered by the strategy during replay. The original packet
-					// stays in the delayed queue for logical replay; only its resend is
-					// suppressed.
+					// payload is delivered during replay.
 					if (is_first && ipcache_get_fastpath(ps.sdip4, ps.sdip6))
 					{
-						rp->suppress_replay_send = true;
 						if (make_tcp_ack_only(dis, mod_pkt, len_mod_pkt))
 						{
 							DLOG("replacing first reasm fragment with ACK-only packet (hardware fastpath workaround)\n");
@@ -2388,47 +2385,19 @@ static bool replay_queue(struct rawpacket_queue *q)
 		DLOG("REPLAYING delayed packet #%u offset %zu\n", i+1, offset);
 		modlen = sizeof(mod);
 		uint8_t verdict = dpi_desync_packet_play(i, count, offset, rp->fwmark_orig, rp->ifin, rp->ifout, rp->tpos_present ? &rp->tpos : NULL, rp->packet, rp->len, mod, &modlen);
-		if (rp->suppress_replay_send)
+		switch (verdict & VERDICT_MASK)
 		{
-			// fastpath workaround: the packet itself was replaced in-flight with an ACK-only
-			// placeholder (VERDICT_MODIFY), so its payload was not delivered by the kernel.
-			// the play call above is still required: lua strategies act on the first replay
-			// piece and send the whole reassembled payload themselves (rawsend side effects),
-			// and replay state (replay_drop, replay_piece_last) must be maintained.
-			// suppress the queued resend only on DROP verdict (the strategy has sent the data
-			// itself). on PASS/MODIFY nothing has delivered the payload yet - resend it,
-			// otherwise the server never receives those bytes and the connection stalls.
-			switch (verdict & VERDICT_MASK)
-			{
-			case VERDICT_MODIFY:
-				DLOG("SENDING delayed packet #%u modified (ACK-only placeholder was sent in-flight)\n", i+1);
-				b &= rawsend((struct sockaddr*)&rp->dst,rp->fwmark,rp->ifout,mod,modlen);
-				break;
-			case VERDICT_PASS:
-				DLOG("SENDING delayed packet #%u unmodified (ACK-only placeholder was sent in-flight)\n", i+1);
-				b &= rawsend_rp(rp);
-				break;
-			case VERDICT_DROP:
-				DLOG("delayed packet #%u replaced by ACK-only placeholder, suppressing queued replay\n", i+1);
-				break;
-			}
-		}
-		else
-		{
-			switch (verdict & VERDICT_MASK)
-			{
-			case VERDICT_MODIFY:
-				DLOG("SENDING delayed packet #%u modified\n", i+1);
-				b &= rawsend((struct sockaddr*)&rp->dst,rp->fwmark,rp->ifout,mod,modlen);
-				break;
-			case VERDICT_PASS:
-				DLOG("SENDING delayed packet #%u unmodified\n", i+1);
-				b &= rawsend_rp(rp);
-				break;
-			case VERDICT_DROP:
-				DLOG("DROPPING delayed packet #%u\n", i+1);
-				break;
-			}
+		case VERDICT_MODIFY:
+			DLOG("SENDING delayed packet #%u modified\n", i+1);
+			b &= rawsend((struct sockaddr*)&rp->dst,rp->fwmark,rp->ifout,mod,modlen);
+			break;
+		case VERDICT_PASS:
+			DLOG("SENDING delayed packet #%u unmodified\n", i+1);
+			b &= rawsend_rp(rp);
+			break;
+		case VERDICT_DROP:
+			DLOG("DROPPING delayed packet #%u\n", i+1);
+			break;
 		}
 
 		if (!bseq)
