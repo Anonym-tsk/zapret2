@@ -3392,6 +3392,9 @@ fmark_err:
 		ConntrackPoolInit(&params.conntrack, 10, params.ctrack_t_syn, params.ctrack_t_est, params.ctrack_t_fin, params.ctrack_t_udp);
 	}
 	DLOG("ipcache lifetime %us\n", params.ipcache_lifetime);
+	DLOG("fastpath workaround %s\n",
+		params.fastpath_workaround == FASTPATH_WORKAROUND_OFF ? "0" :
+		params.fastpath_workaround == FASTPATH_WORKAROUND_ON ? "1" : "auto");
 
 #ifdef __linux__
 	result = nfq_main();

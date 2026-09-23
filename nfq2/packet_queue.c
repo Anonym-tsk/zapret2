@@ -72,7 +72,7 @@ struct rawpacket *rawpacket_queue(
 	else
 		rp->tpos_present = false;
 	rp->server_side = server_side;
-
+	
 	TAILQ_INSERT_TAIL(&q->q, rp, next);
 	
 	return rp;

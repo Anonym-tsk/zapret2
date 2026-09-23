@@ -840,11 +840,11 @@ static bool ipcache_get_hostname(const struct in_addr *a4, const struct in6_addr
 		*hostname = 0;
 	return *hostname;
 }
-// hardware fastpath autodetect. retransmissions during incomplete reasm are counted
-// per server IP (ipcache survives connections, unlike t_ctrack). when the counter
-// reaches FASTPATH_RETRANS_THRESHOLD the platform is considered hardware fastpath
-// and the first reasm fragment of subsequent connections is replaced with an
-// ACK-only packet instead of being dropped (see dpi_desync_tcp_packet_play).
+// hardware fastpath autodetect for --fastpath-workaround=auto. retransmissions
+// during incomplete reasm are counted per server IP (ipcache survives connections,
+// unlike t_ctrack). when the counter reaches FASTPATH_RETRANS_THRESHOLD, the first
+// reasm fragment of subsequent connections is replaced with an ACK-only packet
+// instead of being dropped (see dpi_desync_tcp_packet_play).
 static void ipcache_update_fastpath(const struct in_addr *a4, const struct in6_addr *a6)
 {
 	ip_cache_item *ipc = ipcacheTouch(&params.ipcache, a4, a6, NULL);
@@ -1719,8 +1719,7 @@ static uint8_t dpi_desync_tcp_packet_play(
 
 					bool is_first = rawpacket_queue_empty(&ps.ctrack->delayed);
 
-					struct rawpacket *rp = rawpacket_queue(&ps.ctrack->delayed, &ps.dst, fwmark, desync_fwmark, ifin, ifout, dis->data_pkt, dis->len_pkt, dis->len_payload, &ps.ctrack->pos, false);
-					if (rp)
+					if (rawpacket_queue(&ps.ctrack->delayed, &ps.dst, fwmark, desync_fwmark, ifin, ifout, dis->data_pkt, dis->len_pkt, dis->len_payload, &ps.ctrack->pos, false))
 					{
 						DLOG("DELAY desync until reasm is complete (#%u)\n", rawpacket_queue_count(&ps.ctrack->delayed));
 					}
