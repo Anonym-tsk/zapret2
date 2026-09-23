@@ -1841,6 +1841,7 @@ static void exithelp(void)
 		" --server=[0|1]\t\t\t\t\t\t; change multiple aspects of src/dst ip/port handling for incoming connections\n"
 		" --ipcache-lifetime=<int>\t\t\t\t; time in seconds to keep cached hop count and domain name (default %u). 0 = no expiration\n"
 		" --ipcache-hostname=[0|1]\t\t\t\t; 1 or no argument enables ip->hostname caching\n"
+		" --fastpath-workaround=0|1|auto\t\t\t; hardware fastpath workaround for TLS reassembly (default : 0)\n"
 		" --reasm-disable=[type[,type]]\t\t\t\t; disable reasm for these L7 payloads : tls_client_hello quic_initial . if no argument - disable all reasm.\n"
 #ifdef __CYGWIN__
 		"\nWINDIVERT FILTER:\n"
@@ -2004,6 +2005,7 @@ enum opt_indices {
 	IDX_SERVER,
 	IDX_IPCACHE_LIFETIME,
 	IDX_IPCACHE_HOSTNAME,
+	IDX_FASTPATH_WORKAROUND,
 	IDX_REASM_DISABLE,
 #ifdef __linux__
 	IDX_FWMARK,
@@ -2115,6 +2117,7 @@ static const struct option long_options[] = {
 	[IDX_SERVER] = {"server", optional_argument, 0, 0},
 	[IDX_IPCACHE_LIFETIME] = {"ipcache-lifetime", required_argument, 0, 0},
 	[IDX_IPCACHE_HOSTNAME] = {"ipcache-hostname", optional_argument, 0, 0},
+	[IDX_FASTPATH_WORKAROUND] = {"fastpath-workaround", required_argument, 0, 0},
 	[IDX_REASM_DISABLE] = {"reasm-disable", optional_argument, 0, 0},
 #ifdef __linux__
 	[IDX_FWMARK] = {"fwmark", required_argument, 0, 0},
@@ -2499,6 +2502,19 @@ int main(int argc, char **argv)
 			break;
 		case IDX_IPCACHE_HOSTNAME:
 			params.cache_hostname = !optarg || atoi(optarg);
+			break;
+		case IDX_FASTPATH_WORKAROUND:
+			if (!strcmp(optarg, "0"))
+				params.fastpath_workaround = FASTPATH_WORKAROUND_OFF;
+			else if (!strcmp(optarg, "1"))
+				params.fastpath_workaround = FASTPATH_WORKAROUND_ON;
+			else if (!strcmp(optarg, "auto"))
+				params.fastpath_workaround = FASTPATH_WORKAROUND_AUTO;
+			else
+			{
+				DLOG_ERR("invalid fastpath-workaround value : %s\n", optarg);
+				exit_clean(1);
+			}
 			break;
 		case IDX_PAYLOAD_DISABLE:
 			if (optarg)

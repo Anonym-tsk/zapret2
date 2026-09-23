@@ -654,6 +654,7 @@ General parameters for all versions - nfqws2, dvtws2, winws2.
  --server=[0|1]                                         ; server mode. modifies various aspects of direction selection and source/destination ip/port for handling listeners
  --ipcache-lifetime=<int>                               ; IP cache entry lifetime in seconds. 0 - unlimited.
  --ipcache-hostname=[0|1]                               ; 1 or no argument enables hostname caching for use in zero-phase strategies
+ --fastpath-workaround=0|1|auto                         ; hardware fastpath workaround for TLS reassembly: 0 - disabled (default), 1 - always enabled, auto - enabled per IP after two retransmissions
  --reasm-disable=[type[,type]]                          ; disable fragment reassembly for a list of payloads: tls_client_hello quic_initial. without arguments - disable reasm for everything.
 
 DESYNC ENGINE INIT:

@@ -1701,12 +1701,14 @@ static uint8_t dpi_desync_tcp_packet_play(
 					// path with regular single packet semantics: split positions inside the first
 					// fragment still resolve (SNI is almost always there). flows with SNI in the
 					// stolen fragments can not be desynced - those bytes never reach NFQUEUE.
-					// the event is also counted per server IP in ipcache: after FASTPATH_RETRANS_THRESHOLD
-					// events the platform is considered fastpath and further connections take the
-					// ACK-only replacement path below from the first fragment.
-					if (is_retransmission(&ps.ctrack->pos.client))
+					// in auto mode the event is counted per server IP in ipcache: after
+					// FASTPATH_RETRANS_THRESHOLD events further connections take the ACK-only
+					// replacement path below from the first fragment.
+					if (params.fastpath_workaround != FASTPATH_WORKAROUND_OFF &&
+						is_retransmission(&ps.ctrack->pos.client))
 					{
-						ipcache_update_fastpath(ps.sdip4, ps.sdip6);
+						if (params.fastpath_workaround == FASTPATH_WORKAROUND_AUTO)
+							ipcache_update_fastpath(ps.sdip4, ps.sdip6);
 						DLOG("retransmission while reasm is incomplete (fastpath steals further fragments). discarding reasm, falling back to single packet desync\n");
 						reasm_client_cancel_discard(ps.ctrack);
 						rdata_payload = dis->data_payload;
@@ -1738,15 +1740,16 @@ static uint8_t dpi_desync_tcp_packet_play(
 					// Workaround for hardware fastpath platforms (Mediatek MT7621, Keenetic KN-1011):
 					// DROP of the first fragment triggers RTCACHE in conntrack, after which
 					// subsequent fragments bypass NFQUEUE entirely via hardware shortcut.
-					// Reasm never completes. Applied only after the platform is detected as
-					// fastpath (ipcache retransmission counter reached the threshold); until
-					// then the first fragment is dropped as usual (upstream behaviour) and the
-					// detection above collects statistics. Fix: replace the first fragment
+					// Reasm never completes. In mode 1 the workaround is always applied; in
+					// auto mode it is applied after the per-IP retransmission counter reaches
+					// the threshold. Fix: replace the first fragment
 					// with a payload-less TCP ACK (VERDICT_MODIFY keeps NF_ACCEPT semantics
 					// so the flow stays on the slow path). No ClientHello bytes leak to the
 					// server or DPI and no TCP sequence space is occupied. The full desynced
 					// payload is delivered during replay.
-					if (is_first && ipcache_get_fastpath(ps.sdip4, ps.sdip6))
+					if (is_first &&
+						(params.fastpath_workaround == FASTPATH_WORKAROUND_ON ||
+						 (params.fastpath_workaround == FASTPATH_WORKAROUND_AUTO && ipcache_get_fastpath(ps.sdip4, ps.sdip6))))
 					{
 						if (make_tcp_ack_only(dis, mod_pkt, len_mod_pkt))
 						{
