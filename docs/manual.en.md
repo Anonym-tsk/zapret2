@@ -1519,6 +1519,8 @@ On some routers with hardware fastpath (a known case is the Mediatek MT7621 in t
 
 The `auto` mode starts with the normal DROP behavior and enables the workaround globally after two retransmissions during incomplete reassembly with no successful reassembly between them. A successful reassembly resets the counter until the threshold is reached; after that, the workaround remains enabled until the process restarts. The default mode is `0`. The workaround is unnecessary on platforms without this problem.
 
+On a retransmission during incomplete reassembly, modes `1` and `auto` cancel reassembly without sending the queued segments and process the current segment on its own. If the SNI was present only in segments that bypassed NFQUEUE, that connection cannot be desynchronized.
+
 For `quic_initial`, individual packets are accumulated in an internal buffer, after which they are decrypted, merged, and defragmented. This handles payload parts scattered across packets and different offsets (a technique used by Chrome to prevent others from oversimplifying their algorithms, ensuring they follow standards and can correctly reassemble payloads from parts).
 
 Until assembly is finalized, packets are accumulated in the internal buffer without calling Lua. Once finalized, the individual parts are replayed ([replay](#handling-multi-packet-payloads)). The Lua instances receive a dissection of each delayed packet, but with the fields `desync.replay=true`, `desync.replay_piece`, `desync.replay_count`, and `desync.replay_piece_last` set.

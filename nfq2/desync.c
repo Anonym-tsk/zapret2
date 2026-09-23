@@ -632,11 +632,7 @@ static void reasm_client_cancel(t_ctrack *ctrack)
 {
 	reasm_client_stop(ctrack, "reassemble session cancelled\n");
 }
-// cancel reasm and DISCARD the delayed queue without sending it.
-// used when the hardware fastpath steals further fragments: the queued originals
-// must not leak out unmodified (the DPI would see the real SNI). the client is
-// retransmitting the held data anyway and the retransmission is processed through
-// the normal desync path instead.
+// discard delayed originals when falling back to a retransmitted fragment
 static void reasm_client_cancel_discard(t_ctrack *ctrack)
 {
 	if (ctrack)
@@ -653,9 +649,6 @@ static void reasm_client_fin(t_ctrack *ctrack)
 }
 
 
-// hardware fastpath workaround helper: build payload-less TCP ACK from the dissected packet.
-// preserves L3/L4 headers and TCP options, removes payload, fixes lengths and checksums.
-// the ACK does not occupy sequence space and reveals no payload bytes.
 static bool make_tcp_ack_only(const struct dissect *dis, uint8_t *mod_pkt, size_t *len_mod_pkt)
 {
 	if (!dis || !dis->tcp || (!dis->ip && !dis->ip6)) return false;
@@ -840,11 +833,7 @@ static bool ipcache_get_hostname(const struct in_addr *a4, const struct in6_addr
 		*hostname = 0;
 	return *hostname;
 }
-// hardware fastpath autodetect for --fastpath-workaround=auto. fastpath is a
-// property of the local datapath, so retransmissions during incomplete reasm are
-// counted globally for the process. successful reasm resets the counter until it
-// reaches FASTPATH_RETRANS_THRESHOLD; after that incomplete reasm fragments of
-// subsequent connections are replaced with ACK-only packets instead of being dropped.
+// fastpath belongs to the local datapath, so autodetection is process-wide
 static bool fastpath_detected(void)
 {
 	return params.fastpath_retrans_count >= FASTPATH_RETRANS_THRESHOLD;
@@ -1686,19 +1675,8 @@ static uint8_t dpi_desync_tcp_packet_play(
 
 				if (!ReasmIsEmpty(&ps.ctrack->reasm_client))
 				{
-					// hardware fastpath fallback and autodetect: a retransmission of already buffered data means
-					// the remaining reasm fragments are not reaching NFQUEUE (FASTNAT/RTCACHE
-					// steals them; the dup-ACK storm proves the fastpath itself already delivered
-					// them to the server out of order). discard the reasm and the queued originals
-					// WITHOUT sending them - they must not leak unmodified, the DPI would see the
-					// real SNI. the retransmitted packet is processed through the normal desync
-					// path with regular single packet semantics: split positions inside the first
-					// fragment still resolve (SNI is almost always there). flows with SNI in the
-					// stolen fragments can not be desynced - those bytes never reach NFQUEUE.
-					// in auto mode the event is counted globally: after
-					// FASTPATH_RETRANS_THRESHOLD events without a successful reasm between them,
-					// further connections take the ACK-only replacement path below from the
-					// first fragment.
+					// Treat retransmission during incomplete reasm as a fastpath bypass.
+					// Discard queued originals to avoid exposing SNI and retry this fragment normally.
 					if (params.fastpath_workaround != FASTPATH_WORKAROUND_OFF &&
 						is_retransmission(&ps.ctrack->pos.client))
 					{
@@ -1728,26 +1706,18 @@ static uint8_t dpi_desync_tcp_packet_play(
 					}
 					if (ReasmIsFull(&ps.ctrack->reasm_client))
 					{
-						if (!fastpath_detected()) params.fastpath_retrans_count = 0;
+						if (params.fastpath_workaround == FASTPATH_WORKAROUND_AUTO && !fastpath_detected())
+							params.fastpath_retrans_count = 0;
 						replay_queue(&ps.ctrack->delayed);
 						reasm_client_fin(ps.ctrack);
 						return VERDICT_DROP;
 					}
-					// Workaround for hardware fastpath platforms (Mediatek MT7621, Keenetic KN-1011):
-					// DROP of an incomplete fragment triggers RTCACHE in conntrack, after which
-					// subsequent fragments bypass NFQUEUE entirely via hardware shortcut.
-					// Reasm never completes. In mode 1 the workaround is always applied; in
-					// auto mode it is applied after the global retransmission counter reaches
-					// the threshold. Fix: replace every incomplete fragment
-					// with a payload-less TCP ACK (VERDICT_MODIFY keeps NF_ACCEPT semantics
-					// so the flow stays on the slow path). No ClientHello bytes leak to the
-					// server or DPI and no TCP sequence space is occupied. The full desynced
-					// payload is delivered during replay.
+					// On affected hardware DROP activates RTCACHE and later fragments bypass NFQUEUE.
+					// ACK-only placeholders keep the flow on the slow path until replay.
 					if (params.fastpath_workaround == FASTPATH_WORKAROUND_ON ||
 						(params.fastpath_workaround == FASTPATH_WORKAROUND_AUTO && fastpath_detected()))
 					{
-						// FIN and URG refer to the removed payload sequence space; RST must not
-						// terminate the connection before the queued packet is replayed.
+						// control flags are unsafe after removing the payload or before replay
 						if (dis->tcp->th_flags & (TH_FIN | TH_RST | TH_URG))
 						{
 							DLOG("not replacing incomplete reasm fragment with ACK-only because TCP control flags are set\n");

@@ -319,10 +319,8 @@ static int nfq_cb(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg, struct nfq_da
 	{
 		len = ilen;
 		modlen = RECONSTRUCT_MAX_SIZE;
-		// there's no space to grow packet in recv blob from nfqueue. it can contain multiple packets with no extra buffer length for modifications.
-		// to support increased sizes use separate mod buffer
-		// this is not a problem because only LUA code can trigger VERDICT_MODIFY (and postnat workaround too, once a connection if first packet is dropped)
-		// in case of VERIDCT_MODIFY packet is always reconstructed from dissect, so no difference where to save the data => no performance loss
+		// nfqueue's receive blob has no room to grow packets, so use a separate buffer.
+		// VERDICT_MODIFY producers build the output from dissect, making this safe.
 		uint8_t verdict = processPacketData(&mark, ifr_in.ifr_name, ifr_out.ifr_name, data, len, cbdata->mod, &modlen);
 		switch (verdict & VERDICT_MASK)
 		{
