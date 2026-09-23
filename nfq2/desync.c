@@ -1713,6 +1713,7 @@ static uint8_t dpi_desync_tcp_packet_play(
 						reasm_client_cancel_discard(ps.ctrack);
 						rdata_payload = dis->data_payload;
 						rlen_payload = dis->len_payload;
+						ps.bHaveHost = TLSHelloExtractHost(rdata_payload, rlen_payload, ps.host, sizeof(ps.host), true);
 						goto rediscover;
 					}
 
