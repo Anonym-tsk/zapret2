@@ -843,8 +843,8 @@ static bool ipcache_get_hostname(const struct in_addr *a4, const struct in6_addr
 // hardware fastpath autodetect for --fastpath-workaround=auto. fastpath is a
 // property of the local datapath, so retransmissions during incomplete reasm are
 // counted globally for the process. successful reasm resets the counter until it
-// reaches FASTPATH_RETRANS_THRESHOLD; after that the first reasm fragment of
-// subsequent connections is replaced with an ACK-only packet instead of being dropped.
+// reaches FASTPATH_RETRANS_THRESHOLD; after that incomplete reasm fragments of
+// subsequent connections are replaced with ACK-only packets instead of being dropped.
 static bool fastpath_detected(void)
 {
 	return params.fastpath_retrans_count >= FASTPATH_RETRANS_THRESHOLD;
@@ -1712,8 +1712,6 @@ static uint8_t dpi_desync_tcp_packet_play(
 						goto rediscover;
 					}
 
-					bool is_first = rawpacket_queue_empty(&ps.ctrack->delayed);
-
 					if (rawpacket_queue(&ps.ctrack->delayed, &ps.dst, fwmark, desync_fwmark, ifin, ifout, dis->data_pkt, dis->len_pkt, dis->len_payload, &ps.ctrack->pos, false))
 					{
 						DLOG("DELAY desync until reasm is complete (#%u)\n", rawpacket_queue_count(&ps.ctrack->delayed));
@@ -1734,29 +1732,28 @@ static uint8_t dpi_desync_tcp_packet_play(
 						return VERDICT_DROP;
 					}
 					// Workaround for hardware fastpath platforms (Mediatek MT7621, Keenetic KN-1011):
-					// DROP of the first fragment triggers RTCACHE in conntrack, after which
+					// DROP of an incomplete fragment triggers RTCACHE in conntrack, after which
 					// subsequent fragments bypass NFQUEUE entirely via hardware shortcut.
 					// Reasm never completes. In mode 1 the workaround is always applied; in
 					// auto mode it is applied after the global retransmission counter reaches
-					// the threshold. Fix: replace the first fragment
+					// the threshold. Fix: replace every incomplete fragment
 					// with a payload-less TCP ACK (VERDICT_MODIFY keeps NF_ACCEPT semantics
 					// so the flow stays on the slow path). No ClientHello bytes leak to the
 					// server or DPI and no TCP sequence space is occupied. The full desynced
 					// payload is delivered during replay.
-					if (is_first &&
-						(params.fastpath_workaround == FASTPATH_WORKAROUND_ON ||
-						 (params.fastpath_workaround == FASTPATH_WORKAROUND_AUTO && fastpath_detected())))
+					if (params.fastpath_workaround == FASTPATH_WORKAROUND_ON ||
+						(params.fastpath_workaround == FASTPATH_WORKAROUND_AUTO && fastpath_detected()))
 					{
 						// FIN and URG refer to the removed payload sequence space; RST must not
 						// terminate the connection before the queued packet is replayed.
 						if (dis->tcp->th_flags & (TH_FIN | TH_RST | TH_URG))
 						{
-							DLOG("not replacing first reasm fragment with ACK-only because TCP control flags are set\n");
+							DLOG("not replacing incomplete reasm fragment with ACK-only because TCP control flags are set\n");
 							return VERDICT_DROP;
 						}
 						if (make_tcp_ack_only(dis, mod_pkt, len_mod_pkt))
 						{
-							DLOG("replacing first reasm fragment with ACK-only packet (hardware fastpath workaround)\n");
+							DLOG("replacing incomplete reasm fragment with ACK-only packet (hardware fastpath workaround)\n");
 							return VERDICT_MODIFY | VERDICT_NOCSUM;
 						}
 						DLOG_ERR("failed to build ACK-only reasm placeholder. dropping\n");
