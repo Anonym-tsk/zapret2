@@ -663,7 +663,8 @@ static bool make_tcp_ack_only(const struct dissect *dis, uint8_t *mod_pkt, size_
 
 	size_t len = dis->len_l3 + dis->len_l4; // all L3 headers (incl. ip6 ext) + TCP header with options
 	if (*len_mod_pkt < len) return false;
-	memcpy(mod_pkt, dis->data_pkt, len);
+	// dvtws2 uses the same input and output buffer
+	memmove(mod_pkt, dis->data_pkt, len);
 
 	struct tcphdr *tcp = (struct tcphdr *)(mod_pkt + dis->len_l3);
 	tcp->th_flags &= ~TH_PUSH; // PSH without payload is meaningless
