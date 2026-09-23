@@ -189,6 +189,7 @@ struct params_s
 #endif
 
 	enum fastpath_workaround_mode fastpath_workaround;
+	uint8_t fastpath_retrans_count;
 	bool cache_hostname;
 	unsigned int ipcache_lifetime;
 	ip_cache ipcache;

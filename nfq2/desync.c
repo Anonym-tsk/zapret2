@@ -840,26 +840,20 @@ static bool ipcache_get_hostname(const struct in_addr *a4, const struct in6_addr
 		*hostname = 0;
 	return *hostname;
 }
-// hardware fastpath autodetect for --fastpath-workaround=auto. retransmissions
-// during incomplete reasm are counted per server IP (ipcache survives connections,
-// unlike t_ctrack). when the counter reaches FASTPATH_RETRANS_THRESHOLD, the first
-// reasm fragment of subsequent connections is replaced with an ACK-only packet
-// instead of being dropped (see dpi_desync_tcp_packet_play).
-static void ipcache_update_fastpath(const struct in_addr *a4, const struct in6_addr *a6)
+// hardware fastpath autodetect for --fastpath-workaround=auto. fastpath is a
+// property of the local datapath, so retransmissions during incomplete reasm are
+// counted globally for the process. successful reasm resets the counter until it
+// reaches FASTPATH_RETRANS_THRESHOLD; after that the first reasm fragment of
+// subsequent connections is replaced with an ACK-only packet instead of being dropped.
+static bool fastpath_detected(void)
 {
-	ip_cache_item *ipc = ipcacheTouch(&params.ipcache, a4, a6, NULL);
-	if (!ipc)
-	{
-		DLOG_ERR("ipcache_update_fastpath: out of memory\n");
-		return;
-	}
-	if (ipc->fastpath_retrans_count < 255) ipc->fastpath_retrans_count++;
-	DLOG("updated fastpath counter %u/%u\n", ipc->fastpath_retrans_count, FASTPATH_RETRANS_THRESHOLD);
+	return params.fastpath_retrans_count >= FASTPATH_RETRANS_THRESHOLD;
 }
-static bool ipcache_get_fastpath(const struct in_addr *a4, const struct in6_addr *a6)
+static void fastpath_update(void)
 {
-	ip_cache_item *ipc = ipcacheFind(&params.ipcache, a4, a6, NULL);
-	return ipc && ipc->fastpath_retrans_count >= FASTPATH_RETRANS_THRESHOLD;
+	if (fastpath_detected()) return;
+	params.fastpath_retrans_count++;
+	DLOG("updated fastpath counter %u/%u\n", params.fastpath_retrans_count, FASTPATH_RETRANS_THRESHOLD);
 }
 static void ipcache_update_ttl(t_ctrack *ctrack, const struct in_addr *a4, const struct in6_addr *a6, const char *iface)
 {
@@ -1701,14 +1695,15 @@ static uint8_t dpi_desync_tcp_packet_play(
 					// path with regular single packet semantics: split positions inside the first
 					// fragment still resolve (SNI is almost always there). flows with SNI in the
 					// stolen fragments can not be desynced - those bytes never reach NFQUEUE.
-					// in auto mode the event is counted per server IP in ipcache: after
-					// FASTPATH_RETRANS_THRESHOLD events further connections take the ACK-only
-					// replacement path below from the first fragment.
+					// in auto mode the event is counted globally: after
+					// FASTPATH_RETRANS_THRESHOLD events without a successful reasm between them,
+					// further connections take the ACK-only replacement path below from the
+					// first fragment.
 					if (params.fastpath_workaround != FASTPATH_WORKAROUND_OFF &&
 						is_retransmission(&ps.ctrack->pos.client))
 					{
 						if (params.fastpath_workaround == FASTPATH_WORKAROUND_AUTO)
-							ipcache_update_fastpath(ps.sdip4, ps.sdip6);
+							fastpath_update();
 						DLOG("retransmission while reasm is incomplete (fastpath steals further fragments). discarding reasm, falling back to single packet desync\n");
 						reasm_client_cancel_discard(ps.ctrack);
 						rdata_payload = dis->data_payload;
@@ -1733,6 +1728,7 @@ static uint8_t dpi_desync_tcp_packet_play(
 					}
 					if (ReasmIsFull(&ps.ctrack->reasm_client))
 					{
+						if (!fastpath_detected()) params.fastpath_retrans_count = 0;
 						replay_queue(&ps.ctrack->delayed);
 						reasm_client_fin(ps.ctrack);
 						return VERDICT_DROP;
@@ -1741,7 +1737,7 @@ static uint8_t dpi_desync_tcp_packet_play(
 					// DROP of the first fragment triggers RTCACHE in conntrack, after which
 					// subsequent fragments bypass NFQUEUE entirely via hardware shortcut.
 					// Reasm never completes. In mode 1 the workaround is always applied; in
-					// auto mode it is applied after the per-IP retransmission counter reaches
+					// auto mode it is applied after the global retransmission counter reaches
 					// the threshold. Fix: replace the first fragment
 					// with a payload-less TCP ACK (VERDICT_MODIFY keeps NF_ACCEPT semantics
 					// so the flow stays on the slow path). No ClientHello bytes leak to the
@@ -1749,7 +1745,7 @@ static uint8_t dpi_desync_tcp_packet_play(
 					// payload is delivered during replay.
 					if (is_first &&
 						(params.fastpath_workaround == FASTPATH_WORKAROUND_ON ||
-						 (params.fastpath_workaround == FASTPATH_WORKAROUND_AUTO && ipcache_get_fastpath(ps.sdip4, ps.sdip6))))
+						 (params.fastpath_workaround == FASTPATH_WORKAROUND_AUTO && fastpath_detected())))
 					{
 						// FIN and URG refer to the removed payload sequence space; RST must not
 						// terminate the connection before the queued packet is replayed.
