@@ -1752,6 +1752,13 @@ static uint8_t dpi_desync_tcp_packet_play(
 						(params.fastpath_workaround == FASTPATH_WORKAROUND_ON ||
 						 (params.fastpath_workaround == FASTPATH_WORKAROUND_AUTO && ipcache_get_fastpath(ps.sdip4, ps.sdip6))))
 					{
+						// FIN and URG refer to the removed payload sequence space; RST must not
+						// terminate the connection before the queued packet is replayed.
+						if (dis->tcp->th_flags & (TH_FIN | TH_RST | TH_URG))
+						{
+							DLOG("not replacing first reasm fragment with ACK-only because TCP control flags are set\n");
+							return VERDICT_DROP;
+						}
 						if (make_tcp_ack_only(dis, mod_pkt, len_mod_pkt))
 						{
 							DLOG("replacing first reasm fragment with ACK-only packet (hardware fastpath workaround)\n");
